@@ -2,18 +2,24 @@
 #include <Adafruit_ST7789.h> 
 #include <SPI.h>
 
-// --- ตั้งค่าพินจอ TFT (ตามรูปภาพเดิมของคุณ) ---
-#define TFT_CS    5   
-#define TFT_RS    2   // หรือ DC
-#define TFT_RST   4   
+// --- ตั้งค่าพินจอ TFT ---
+#define TFT_CS     5   
+#define TFT_RS     14   // หรือ DC
+#define TFT_RST    4   
 // --- ตั้งค่าพิน EC Sensor ---
 #define EC_PIN    34          
 #define K_VALUE   0.985
-// --- ตั้งค่าพิน Ultrasonic (ตามโค้ดใหม่ของคุณ) ---
+// --- ตั้งค่าพิน Ultrasonic ---
 const int pingPin = 13; // Trig
-int inPin = 12;         // Echo
+const int inPin = 12;   // Echo
 
 Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_RS, TFT_RST);
+
+// --- ฟังก์ชันคำนวณระยะทาง (แยกออกมาตามที่คุณต้องการ) ---
+float microsecondsToCentimeters(long microseconds) {
+  // ใช้สูตรหาร 29 และหาร 2 เป็นทศนิยม
+  return (float)microseconds / 29.0 / 2.0;
+}
 
 void setup() {
   Serial.begin(9600);
@@ -39,33 +45,40 @@ void setup() {
 }
 
 void loop() {
-  // --- 1. อ่านค่า Ultrasonic (วัดระยะทาง) ---
-  long duration, cm;
-  pinMode(pingPin, OUTPUT);
-  digitalWrite(pingPin, LOW);
-  delayMicroseconds(2);
-  digitalWrite(pingPin, HIGH);
-  delayMicroseconds(5);
-  digitalWrite(pingPin, LOW);
-  
-  pinMode(inPin, INPUT);
-  duration = pulseIn(inPin, HIGH);
-  cm = duration / 29 / 2; // สูตรคำนวณเซนติเมตร
+  // --- 1. อ่านค่า Ultrasonic แบบ Sampling (22 ครั้ง) ---
+  float totalCm = 0;
+  int samples = 22; 
+
+  for (int i = 0; i < samples; i++) {
+    pinMode(pingPin, OUTPUT);
+    digitalWrite(pingPin, LOW);
+    delayMicroseconds(2);
+    digitalWrite(pingPin, HIGH);
+    delayMicroseconds(5);
+    digitalWrite(pingPin, LOW);
+    
+    pinMode(inPin, INPUT);
+    long duration = pulseIn(inPin, HIGH, 30000); // เพิ่ม Timeout ป้องกันค้าง
+
+    totalCm += microsecondsToCentimeters(duration);
+    delay(2); // พักสั้นๆ ระหว่าง Sampling
+  }
+  float averageCm = totalCm / samples;
 
   // --- 2. อ่านค่า EC Sensor ---
-  long sum = 0;
-  for (int i = 0; i < 40; i++) {
-    sum += analogRead(EC_PIN);
-    delay(2);
+  long sumEC = 0;
+  for (int i = 0; i < 50; i++) {
+    sumEC += analogRead(EC_PIN);
+    delay(10);
   }
-  float averageADC = sum / 40.0;
-  float voltage = (averageADC / 4095.0) * 3.3;
+  float averageADC = sumEC / 50.0;
+  float voltage = averageADC * 3.3 / 4095.0;
   float ecValue = (voltage * 5.0) * K_VALUE;
   if (ecValue < 0) ecValue = 0;
 
-  // --- 3. แสดงผลบนหน้าจอ ---
+  // --- 3. แสดงผลบนหน้าจอ TFT ---
   // พื้นที่แสดง EC
-  tft.fillRect(20, 50, 280, 70, ST77XX_BLACK); // ล้างค่าเก่า
+  tft.fillRect(20, 50, 280, 70, ST77XX_BLACK); 
   tft.setCursor(20, 60);
   tft.setTextColor(ST77XX_GREEN);
   tft.setTextSize(2);
@@ -75,20 +88,23 @@ void loop() {
   tft.setTextSize(2);
   tft.print(" ms");
 
-  // พื้นที่แสดงระยะทาง (Distance)
-  tft.fillRect(20, 140, 280, 70, ST77XX_BLACK); // ล้างค่าเก่า
+  // พื้นที่แสดงระยะทาง (Average Distance)
+  tft.fillRect(20, 140, 280, 70, ST77XX_BLACK); 
   tft.setCursor(20, 150);
   tft.setTextColor(ST77XX_YELLOW);
   tft.setTextSize(2);
   tft.print("Dist: ");
   tft.setTextSize(5);
-  tft.print(cm);
+  tft.print(averageCm, 2); // โชว์ทศนิยม 2 ตำแหน่ง
   tft.setTextSize(2);
   tft.print(" cm");
 
   // ปริ้นออก Serial Monitor
-  Serial.print("EC: "); Serial.print(ecValue);
-  Serial.print(" | Dist: "); Serial.print(cm); Serial.println("cm");
+  Serial.print("V: "); Serial.print(voltage, 10);
+  Serial.print("| EC: "); Serial.print(ecValue, 10);
+  Serial.print(" | Avg Dist: "); Serial.print(averageCm, 2); 
+  Serial.println(" cm"); 
 
-  delay(500); // อัปเดตทุก 0.5 วินาที
+
+  delay(200); // อัปเดตข้อมูลทุก 0.2 วินาที
 }
