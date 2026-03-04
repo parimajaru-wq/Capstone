@@ -5,12 +5,12 @@
 #include <PubSubClient.h>
 
 // --- 1. ตั้งค่า WiFi และ NETPIE ---
-const char* ssid     = "One";
-const char* password = "022372937";
+const char* ssid     = "";
+const char* password = "";
 const char* mqtt_server = "broker.netpie.io";
-const char* client_id   = "7e7249ed-78ff-46c7-a78b-febf5ba8ebb3";
-const char* token       = "6cdv5bKihQjybaqzw4XqDQUKNxtLHbke";
-const char* secret      = "L1K5bbVZZUpeyAncJKE7XPWr9hqdTH9Q";
+const char* client_id   = "";
+const char* token       = "";
+const char* secret      = "";
 
 // --- 2. ตั้งค่าพินอุปกรณ์ ---
 #define TFT_CS     5   
