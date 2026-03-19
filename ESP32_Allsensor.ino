@@ -31,18 +31,18 @@ const char* ssid     = "EETAR3";
 const char* password = "EETARNET";
 
 // ==========================================
-// Google Sheet
+// Google Sheet กรอกเพิ่ม
 // ==========================================
-const char* scriptURL = "https://script.google.com/macros/s/AKfycbz5vPyy7ZPPOjNMF3sTzzm4Sda6s96z0pwCtgkrWaQQZkipiktWZxg7DVPHRd8HPSYE/exec";
+const char* scriptURL = "  ";
 
 // ==========================================
-// NETPIE 2020
+// NETPIE 2020 กรอกเพิ่ม
 // ==========================================
 const char* mqtt_server = "broker.netpie.io";
 const int   mqtt_port   = 1883;
-const char* client_id   = "7e7249ed-78ff-46c7-a78b-febf5ba8ebb3";
-const char* token       = "6cdv5bKihQjybaqzw4XqDQUKNxtLHbke";
-const char* secret      = "L1K5bbVZZUpeyAncJKE7XPWr9hqdTH9Q";
+const char* client_id   = "  ";
+const char* token       = "  ";
+const char* secret      = "  ";
 
 const char* TOPIC_CONFIG = "@msg/config";
 const char* TOPIC_SHADOW = "@shadow/data/update";
