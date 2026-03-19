@@ -1,7 +1,7 @@
 # EC Water Monitor System
- 
 ระบบวัดค่า EC (Electrical Conductivity) และระยะระดับน้ำ ด้วย ESP32  
-ส่งข้อมูลขึ้น NETPIE และ Google Sheet แบบ real-time 
+ส่งข้อมูลขึ้น NETPIE และ Google Sheet แบบ real-time
+
 ---
  
 ## Libraries ที่ต้องติดตั้ง
