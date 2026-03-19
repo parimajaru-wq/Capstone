@@ -25,10 +25,10 @@
 #include <DallasTemperature.h>
 
 // ==========================================
-// WiFi
+// WiFi กรอกเพิ่ม
 // ==========================================
-const char* ssid     = "EETAR3";
-const char* password = "EETARNET";
+const char* ssid     = "  ";
+const char* password = "  ";
 
 // ==========================================
 // Google Sheet กรอกเพิ่ม
