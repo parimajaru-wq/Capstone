@@ -91,11 +91,16 @@ unsigned long ecSampleTime = 0;
 // ==========================================
 // Peristaltic Pump A/B via L298N
 // ==========================================
-#define PWM_A_PIN    25   // ENA ของ L298N channel 1 → ปั๊ม A
-#define PWM_B_PIN    27   // ENB ของ L298N channel 2 → ปั๊ม B
+#define PWM_A_PIN  14   // ENA → ปั๊ม A
+#define IN1_PIN    26
+#define IN2_PIN    27
 
-#define PWM_FREQ     1000 // 1kHz
-#define PWM_RES      8    // 8-bit = 0-255
+#define PWM_B_PIN  25   // ENB → ปั๊ม B
+#define IN3_PIN    32
+#define IN4_PIN    33
+
+#define PWM_FREQ   1000
+#define PWM_RES    8
 
 // อัตราส่วน A:B = 4:1
 const float RATIO_A  = 4.0f;
@@ -325,12 +330,33 @@ void drawScreen(int MV, float EC, float temp,
 // ==========================================
 // ควบคุม Peristaltic Pump A/B
 // ==========================================
+// ==========================================
+// ควบคุม Peristaltic Pump A/B
+// ==========================================
 void setPeriPumps(int pwmA, int pwmB) {
   pwmA = constrain(pwmA, 0, 255);
   pwmB = constrain(pwmB, 0, 255);
   currentPWM_A = pwmA;
   currentPWM_B = pwmB;
+
+  // --- ทิศทางปั๊ม A ---
+  if (pwmA > 0) {
+    digitalWrite(IN1_PIN, HIGH);
+    digitalWrite(IN2_PIN, LOW);
+  } else {
+    digitalWrite(IN1_PIN, LOW);
+    digitalWrite(IN2_PIN, LOW); // เบรก
+  }
   ledcWrite(PWM_A_PIN, pwmA);
+
+  // --- ทิศทางปั๊ม B ---
+  if (pwmB > 0) {
+    digitalWrite(IN3_PIN, HIGH);
+    digitalWrite(IN4_PIN, LOW);
+  } else {
+    digitalWrite(IN3_PIN, LOW);
+    digitalWrite(IN4_PIN, LOW); // เบรก
+  }
   ledcWrite(PWM_B_PIN, pwmB);
 }
 
@@ -359,7 +385,7 @@ void updatePeriPumps(float EC, float ecTgt) {
 
   float total = RATIO_A + RATIO_B;
   int   pwmA  = (int)(pwmBase * RATIO_A / total);
-  int   pwmB  = (int)(pwmBase * RATIO_B / total);
+  int   pwmB  = max((int)(pwmBase * RATIO_B / total), 171);
 
   pumpRunning = true;
   setPeriPumps(pwmA, pwmB);
@@ -393,7 +419,12 @@ void setup() {
   pinMode(TRIG_PIN,  OUTPUT);
   pinMode(ECHO_PIN,  INPUT);
 
-  // Peristaltic Pump A/B via L298N (ESP32 Core 3.x API)
+ // Peristaltic Pump A/B via L298N (ESP32 Core 3.x API)
+  pinMode(IN1_PIN, OUTPUT);
+  pinMode(IN2_PIN, OUTPUT);
+  pinMode(IN3_PIN, OUTPUT);
+  pinMode(IN4_PIN, OUTPUT);
+
   ledcAttach(PWM_A_PIN, PWM_FREQ, PWM_RES);
   ledcAttach(PWM_B_PIN, PWM_FREQ, PWM_RES);
   ledcWrite(PWM_A_PIN, 0);
