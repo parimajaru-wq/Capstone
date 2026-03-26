@@ -338,8 +338,7 @@ void updatePeriPumps(float EC, float ecTgt) {
       float ratio = constrain(err / (ecTgt * 0.95f), 0.0f, 1.0f);
       unsigned long calcTime = (unsigned long)(ratio * 10000); // คำนวณเวลาออกมาก่อน
 
-      // --- ไอเดียของคุณอยู่ตรงนี้ครับ ---
-      // ถ้าคำนวณแล้วเวลาเปิดปั๊มน้อยกว่า 1000 ms (1 วินาที) ให้ถือว่าถึงเป้าแล้ว ไม่ต้องทำอะไร
+      // ถ้าคำนวณแล้วเวลาเปิดปั๊มน้อยกว่า 500 ms (0.5 วินาที) ให้ถือว่าถึงเป้าแล้ว ไม่ต้องทำอะไร
       if (calcTime < 500) {  
         pumpRunning = false;
         if (pumpStopTime == 0) pumpStopTime = now;
@@ -348,7 +347,7 @@ void updatePeriPumps(float EC, float ecTgt) {
       }
       // ----------------------------
 
-      // ถ้าผ่านเงื่อนไขมาได้ (มากกว่า 1 วินาที) ค่อยสั่งปั๊มทำงาน
+      // ถ้าผ่านเงื่อนไขมาได้ (มากกว่า 0.5 วินาที) ค่อยสั่งปั๊มทำงาน
       currentOnTime = calcTime;
       pumpStartTime = now;
       pumpRunning   = true;
