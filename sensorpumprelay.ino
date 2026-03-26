@@ -7,16 +7,16 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
-const char* ssid     = "...";
-const char* password = "...";
+const char* ssid     = "EETAR3";
+const char* password = "EETARNET";
 
-const char* scriptURL = "...";
+const char* scriptURL = "https://script.google.com/macros/s/AKfycbzZmI03Zrxo-NJtMlfxzLsQHMUpzrHI8C64h0wj6GtYY0Hdlwg273BEvxoprBX_lb70/exec";
 
 const char* mqtt_server           = "broker.netpie.io";
 const int   mqtt_port             = 1883;
-const char* client_id             = "...";
-const char* token                 = "...";
-const char* secret                = "...";
+const char* client_id             = "7e7249ed-78ff-46c7-a78b-febf5ba8ebb3";
+const char* token                 = "6cdv5bKihQjybaqzw4XqDQUKNxtLHbke";
+const char* secret                = "L1K5bbVZZUpeyAncJKE7XPWr9hqdTH9Q";
 const char* TOPIC_CONFIG          = "@msg/ecTarget";
 const char* TOPIC_SHADOW          = "@shadow/data/update";
 const char* TOPIC_SHADOW_GET      = "@shadow/data/get";
