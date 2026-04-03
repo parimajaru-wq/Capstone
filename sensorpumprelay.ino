@@ -10,22 +10,29 @@
 // ═══════════════════════════════════════════════════════════
 //  การตั้งค่าเครือข่าย WiFi
 // ═══════════════════════════════════════════════════════════
-const char* ssid     = "...";
-const char* password = "...";
+const char* ssid     = "EETAR3";
+const char* password = "EETARNET";
 
 // ═══════════════════════════════════════════════════════════
 //  Google Apps Script URL สำหรับบันทึกข้อมูลลง Google Sheet
 // ═══════════════════════════════════════════════════════════
-const char* scriptURL = "...";
+const char* scriptURL = "https://script.google.com/macros/s/AKfycbwAk5_TdJOjsFVlfyUHITHM5PA5J1L_N3vGnYm8LXCroWNhestfbSXaL6WyNeD841An/exec";
+
+// ═══════════════════════════════════════════════════════════
+//  ตัวแปรสำหรับ Buffer ข้อมูลดิบ EC ส่ง Google Sheet
+// ═══════════════════════════════════════════════════════════
+const int MAX_RAW_BUFFER = 100;
+float rawEcBuffer[MAX_RAW_BUFFER];
+int   rawEcIndex = 0;
 
 // ═══════════════════════════════════════════════════════════
 //  การตั้งค่า NETPIE MQTT
 // ═══════════════════════════════════════════════════════════
 const char* mqtt_server           = "broker.netpie.io";
 const int   mqtt_port             = 1883;
-const char* client_id             = "...";
-const char* token                 = "...";
-const char* secret                = "...";
+const char* client_id             = "7e7249ed-78ff-46c7-a78b-febf5ba8ebb3";
+const char* token                 = "6cdv5bKihQjybaqzw4XqDQUKNxtLHbke";
+const char* secret                = "L1K5bbVZZUpeyAncJKE7XPWr9hqdTH9Q";
 const char* TOPIC_CONFIG          = "@msg/ecTarget";
 const char* TOPIC_SHADOW          = "@shadow/data/update";
 const char* TOPIC_SHADOW_GET      = "@shadow/data/get";
@@ -55,15 +62,25 @@ unsigned long tempTime    = 0;
 //  เซ็นเซอร์ EC (Analog → GPIO34) — Moving Average 25 ค่า
 // ═══════════════════════════════════════════════════════════
 #define EC_PIN 34
-const byte    NUM_MA = 25;
+const int    NUM_MA = 3000;
 unsigned int  ecReadings[NUM_MA];
-byte          ecIdx        = 0;
+int          ecIdx        = 0;
 unsigned long ecTotal      = 0;
 unsigned long ecSampleTime = 0;
 
-float currentEC = 0.0;
-int   currentMV = 0;
+// ═══════════════════════════════════════════════════════════
+//  Timer แยกสำหรับ จอ TFT และ NETPIE
+// ═══════════════════════════════════════════════════════════
+unsigned long tftTime = 0;
+const unsigned int tftInterval = 5000; // จอและ Google Sheet ทุก 5 วิ
 
+unsigned long netpieTime = 0;
+const unsigned int netpieInterval = 1000; // NETPIE ทุก 1 วิ
+
+float instantEC = 0.0; // ค่า EC ล่าสุด (ไม่ผ่าน MA)
+int   instantMV = 0;   // ค่า MV ล่าสุด
+float currentEC = 0.0; // ค่า EC เฉลี่ย (ผ่าน MA)
+int   currentMV = 0;   // ค่า MV เฉลี่ย (ผ่าน MA)
 // ═══════════════════════════════════════════════════════════
 //  เซ็นเซอร์ระยะ Ultrasonic HC-SR04
 // ═══════════════════════════════════════════════════════════
@@ -80,7 +97,7 @@ int   currentMV = 0;
 // ═══════════════════════════════════════════════════════════
 //  ตัวแปรควบคุมปั๊มสารละลาย
 // ═══════════════════════════════════════════════════════════
-const unsigned long PUMP_STOP_DELAY = 10000;
+const unsigned long PUMP_STOP_DELAY = 300000;
 unsigned long pumpStopTime  = 0;
 bool          pumpRunning   = false;
 unsigned long pumpStartTime = 0;
@@ -109,12 +126,6 @@ int startX = 25, endX = 220;
 int topY   = 90, bottomY = 165;
 int graphX = startX;
 int lastYec = 165;
-
-// ═══════════════════════════════════════════════════════════
-//  Timer แสดงผล / ส่งข้อมูล ทุก 2500ms
-// ═══════════════════════════════════════════════════════════
-unsigned long printTime = 0;
-const unsigned int printInterval = 2500;
 
 // MQTT Client
 WiFiClient   espClient;
@@ -236,7 +247,7 @@ void sendTask(void* param) {
       }
       if (WiFi.status() == WL_CONNECTED) {
         HTTPClient http;
-        http.setTimeout(5000);  // timeout ป้องกัน HTTP ค้างนาน
+        http.setTimeout(5000);
         http.begin(url);
         http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
         http.GET();
@@ -273,18 +284,21 @@ float calcEC(int MV, float coef) {
 
 
 // ═══════════════════════════════════════════════════════════
-//  ส่งข้อมูลไป Google Sheet ผ่าน HTTP GET
+//  ส่งข้อมูลไป Google Sheet ผ่าน HTTP GET (อัปเดตใหม่)
 // ═══════════════════════════════════════════════════════════
 void sendToSheet(float temp, int MV, float EC,
-                 float ecTgt, float dist, float distTgt) {
+                 float ecTgt, float dist, float distTgt, String rawData) {
   if (WiFi.status() != WL_CONNECTED) return;
+  
   String url = String(scriptURL)
     + "?temp="       + String(temp,   1)
     + "&mv="         + String(MV)
     + "&ec="         + String(EC,     2)
     + "&ecTarget="   + String(ecTgt,  1)
     + "&dist="       + String(dist,   1)
-    + "&distTarget=" + String(distTgt,1);
+    + "&distTarget=" + String(distTgt,1)
+    + "&rawEc="      + rawData; // แนบข้อมูล 100 ค่าที่ต่อกันด้วยลูกน้ำไป
+
   if (xSemaphoreTake(urlMutex, portMAX_DELAY)) {
     pendingURL  = url;
     sendPending = true;
@@ -299,8 +313,11 @@ void sendToSheet(float temp, int MV, float EC,
 //  ทุก publish ใช้ค่าจาก parameter ที่ snapshot มาแล้ว
 //  ทำให้ค่าที่ส่งตรงกับจอ TFT 100%
 // ═══════════════════════════════════════════════════════════
-void sendToNetpie(float temp, int MV, float EC,
-                  float ecTgt, float dist, float distTgt) {
+// ═══════════════════════════════════════════════════════════
+//  ส่งข้อมูลขึ้น NETPIE Shadow และ Feed
+// ═══════════════════════════════════════════════════════════
+void sendToNetpie(float temp, int MV, float EC, float instEC, 
+                  float ecTgt, float dist, float distTgt, String rawData = "") {
   if (!mqttClient.connected()) return;
 
   unsigned long remainOn = 0;
@@ -309,27 +326,40 @@ void sendToNetpie(float temp, int MV, float EC,
     remainOn = (elapsed < currentOnTime) ? (currentOnTime - elapsed) / 1000 : 0;
   }
 
+  // สร้าง JSON Payload
   String payload = "{\"data\":{"
     "\"ec\":"        + String(EC,   2) + ","
+    "\"instantEC\":" + String(instEC, 2) + ","
     "\"mv\":"        + String(MV)      + ","
     "\"temp\":"      + String(temp, 1) + ","
     "\"dist\":"      + String(dist, 1) + ","
     "\"pumpA\":"     + String(currentPWM_A) + ","
     "\"pumpB\":"     + String(currentPWM_B) + ","
     "\"onTime\":"    + String(currentOnTime / 1000) + ","
-    "\"remainOn\":"  + String(remainOn) +
-    "}}";
+    "\"remainOn\":"  + String(remainOn);
+
+  // ถ้ามีข้อมูลดิบ 100 ค่าส่งมาด้วย ให้ยัดลง Shadow ไปด้วย
+  if (rawData != "") {
+    payload += ",\"rawEc\":\"" + rawData + "\"";
+  }
+  payload += "}}";
 
   mqttClient.publish(TOPIC_SHADOW, payload.c_str());
 
-  // ส่ง feed ทุกตัวติดกันเลย ไม่มี delay()
-  mqttClient.publish("@feed/ec",       String(EC,   2).c_str());
-  mqttClient.publish("@feed/temp",     String(temp, 1).c_str());
-  mqttClient.publish("@feed/dist",     String(dist, 1).c_str());
-  mqttClient.publish("@feed/pumpA",    String(currentPWM_A).c_str());
-  mqttClient.publish("@feed/pumpB",    String(currentPWM_B).c_str());
-  mqttClient.publish("@feed/onTime",   String(currentOnTime / 1000).c_str());
-  mqttClient.publish("@feed/remainOn", String(remainOn).c_str());
+  // ส่งข้อมูล Feed ปกติ
+  mqttClient.publish("@feed/ec",        String(EC,   2).c_str());
+  mqttClient.publish("@feed/instantEC", String(instEC, 2).c_str());
+  mqttClient.publish("@feed/temp",      String(temp, 1).c_str());
+  mqttClient.publish("@feed/dist",      String(dist, 1).c_str());
+  mqttClient.publish("@feed/pumpA",     String(currentPWM_A).c_str());
+  mqttClient.publish("@feed/pumpB",     String(currentPWM_B).c_str());
+  mqttClient.publish("@feed/onTime",    String(currentOnTime / 1000).c_str());
+  mqttClient.publish("@feed/remainOn",  String(remainOn).c_str());
+
+  // ส่งข้อมูลดิบ 100 ค่า เข้า Feed ชื่อ rawEc (เฉพาะตอนที่เก็บครบ 10 วิ)
+  if (rawData != "") {
+    mqttClient.publish("@feed/rawEc", rawData.c_str());
+  }
 
   Serial.println(payload);
 }
@@ -357,7 +387,7 @@ void drawScreen(int MV, float EC, float temp,
   }
   tft.drawText(45,  32, String(EC, 1), ecColor);
   tft.drawText(150, 32, ecStatus,      ecColor);
-  tft.drawText(45,  48, ">" + String(ecTgt, 0), COLOR_WHITE);
+  tft.drawText(45,  48, String(ecTgt, 0), COLOR_WHITE);
 
   unsigned int dColor;
   String dStatus;
@@ -414,7 +444,7 @@ void updatePeriPumps(float EC, float ecTgt) {
   }
 
   unsigned long now = millis();
-  float err = (ecTgt * 0.95f) - EC;
+  float err = ecTgt - EC;
 
   if (err <= 0) {
     pumpRunning = false;
@@ -430,8 +460,8 @@ void updatePeriPumps(float EC, float ecTgt) {
 
   if (!pumpRunning) {
     pumpStopTime  = 0;
-    float ratio = constrain(err / (ecTgt * 0.95f), 0.0f, 1.0f);
-    unsigned long calcTime = (unsigned long)(ratio * 10000);
+    float ratio = constrain(err / ecTgt, 0.0f, 1.0f);
+    unsigned long calcTime = (unsigned long)(ratio * 15000);
 
     if (calcTime < 500) {
       pumpRunning = false;
@@ -515,19 +545,35 @@ void setup() {
   urlMutex = xSemaphoreCreateMutex();
   xTaskCreate(sendTask, "sendTask", 8192, NULL, 1, NULL);
 
-  tft.drawText(2, 16, "Warming up...", COLOR_YELLOW);
-  Serial.println("Warming up EC sensor...");
+// ═══════════════════════════════════════════════════════════
+  //  Warmup EC sensor (รอ 2 นาที ก่อนให้ปั๊มเริ่มทำงาน)
+  // ═══════════════════════════════════════════════════════════
+  tft.drawText(2, 16, "Warm up 2 mins...", COLOR_YELLOW);
+  Serial.println("Warming up EC sensor (Fast Fill + 2 mins wait)...");
+
+  // 1. อ่านค่าแรกเข้ามาก่อน แล้วก๊อปปี้ใส่ให้เต็ม 3,000 ช่องทันที
+  // เพื่อไม่ให้ค่าเริ่มต้นเป็น 0 (ป้องกันปั๊มทำงานเพี้ยนตอนเปิดเครื่อง)
+  unsigned int firstRead = analogRead(EC_PIN);
+  ecTotal = 0;
   for (int i = 0; i < NUM_MA; i++) {
+    ecReadings[i] = firstRead;
+    ecTotal += firstRead;
+  }
+
+  // 2. วนลูปอ่านค่าจริงอีก 2 นาที (1200 รอบ x 100ms = 120,000ms)
+  for (int i = 0; i < 1200; i++) {
     updateMA();
+    if(i % 100 == 0) Serial.print("."); // ปริ้นจุดใน Serial ให้รู้ว่าบอร์ดยังไม่ค้าง
     delay(100);
   }
+
   systemReady = true;
   bootTime    = millis();
-  Serial.println("System Ready");
+  Serial.println("\nSystem Ready");
 
   tft.clear();
   tft.drawText(2,  2,  "MV:",  COLOR_WHITE);
-  tft.drawText(2,  16, "T:",   COLOR_WHITE);
+  tft.drawText(2,  16, "Temp:",   COLOR_WHITE);
   tft.drawText(2,  32, "EC:",  COLOR_WHITE);
   tft.drawText(2,  48, "TGT:", COLOR_WHITE);
   tft.drawText(2,  64, "Dst:", COLOR_WHITE);
@@ -535,11 +581,12 @@ void setup() {
 
   tft.drawLine(startX, topY,    startX, bottomY, COLOR_WHITE);
   tft.drawLine(startX, bottomY, endX,   bottomY, COLOR_WHITE);
-  tft.drawText(2,   topY - 4,    "8000", COLOR_YELLOW);
-  tft.drawText(2,   bottomY - 4, " 500", COLOR_YELLOW);
-  tft.drawText(180, bottomY + 4, "200s", COLOR_YELLOW);
+  tft.drawText(2,   topY - 4,    "2500", COLOR_YELLOW);
+  tft.drawText(2,   bottomY - 4, "0", COLOR_YELLOW);
+  tft.drawText(180, bottomY + 4, "15 mins", COLOR_YELLOW);
 
-  memset(ecReadings, 0, sizeof(ecReadings));
+  // ไม่มี memset(ecReadings, 0, ...) — ลบออกแล้ว
+  // การใส่ memset จะ reset buffer ที่ warmup ไว้ ทำให้ปั๊มทำงานเต็ม 10 วิทันที
 }
 
 
@@ -557,7 +604,7 @@ void loop() {
       WiFi.disconnect();
       WiFi.begin(ssid, password);
     }
-    return;  // รอ WiFi ก่อน ยังไม่ทำงานอื่น
+    return;
   }
 
   // ── ดูแล MQTT connection ──
@@ -578,31 +625,63 @@ void loop() {
     updateMA();
   }
 
-  // ── คำนวณ EC และควบคุมปั๊มทุก 100ms ──
+// ── คำนวณ EC และควบคุมปั๊มทุก 100ms ──
   if (now - pumpCheckTime >= 100) {
     pumpCheckTime = now;
     float coefP = 1.0f + 0.0185f * (currentTemp - 25.0f);
+    
     currentMV   = (int)((float)ecTotal / NUM_MA * 3300.0f / 4095.0f);
     currentEC   = calcEC(currentMV, coefP);
+
+    int lastIdx = (ecIdx == 0) ? (NUM_MA - 1) : (ecIdx - 1);
+    instantMV   = (int)((float)ecReadings[lastIdx] * 3300.0f / 4095.0f);
+    instantEC   = calcEC(instantMV, coefP);
+
     updatePeriPumps(currentEC, ecTarget);
+
+    // ── เก็บข้อมูลดิบลง Buffer ──
+    rawEcBuffer[rawEcIndex] = instantEC;
+    rawEcIndex++;
+
+    // ── เมื่อเก็บครบ 100 ค่า (ครบ 10 วินาที) ให้ส่งไป GG Sheet และ NETPIE ──
+    if (rawEcIndex >= MAX_RAW_BUFFER) {
+      String rawStr = "";
+      rawStr.reserve(600); // จองพื้นที่ Memory ป้องกันบอร์ดค้าง
+      for (int i = 0; i < MAX_RAW_BUFFER; i++) {
+        rawStr += String(rawEcBuffer[i], 1); // ใช้ทศนิยม 1 ตำแหน่งประหยัดพื้นที่
+        if (i < MAX_RAW_BUFFER - 1) rawStr += ",";
+      }
+      
+      float snapDist = readDistance();
+      
+      // 1. ส่งไป Google Sheet 
+      sendToSheet(currentTemp, currentMV, currentEC, ecTarget, snapDist, distTarget, rawStr);
+      
+      // 2. ส่งไป NETPIE (แนบข้อมูลดิบไปด้วย)
+      sendToNetpie(currentTemp, currentMV, currentEC, instantEC, ecTarget, snapDist, distTarget, rawStr);
+      
+      rawEcIndex = 0; // รีเซ็ตตัวนับ
+    }
   }
 
-  // ── แสดงผล / ส่งข้อมูล ทุก 2.5 วินาที ──
-  if (now - printTime >= printInterval) {
-    printTime = now;
+  // ── 1. ส่งข้อมูล NETPIE ทุก 1 วินาที (เพื่อให้ Dashboard อัปเดตไวปกติ) ──
+  if (now - netpieTime >= netpieInterval) {
+    netpieTime = now;
+    float snapDist = readDistance();
+    
+    // ใส่พารามิเตอร์สุดท้ายเป็น "" (ค่าว่าง) เพื่อไม่ให้เปลืองโควต้าส่ง String ยาวๆ ทุก 1 วิ
+    sendToNetpie(currentTemp, instantMV, currentEC, instantEC, ecTarget, snapDist, distTarget, "");
+  }
 
-    // snapshot ค่าทุกตัว ณ จุดนี้จุดเดียว
-    // ทำให้ TFT, NETPIE, Google Sheet และ Serial ได้ค่าเดียวกัน 100%
-    float snapEC   = currentEC;
-    int   snapMV   = currentMV;
-    float snapTemp = currentTemp;
+  // ── 2. แสดงผลจอ TFT ทุก 5 วินาที ──
+  if (now - tftTime >= tftInterval) {
+    tftTime = now;
     float snapDist = readDistance();
 
-    // จอ TFT
-    drawScreen(snapMV, snapEC, snapTemp, ecTarget, snapDist, distTarget);
+    drawScreen(currentMV, currentEC, currentTemp, ecTarget, snapDist, distTarget);
 
-    // กราฟ EC บนจอ
-    int yEC = map(constrain((int)snapEC, 500, 8000), 500, 8000, bottomY, topY);
+    // วาดกราฟบนจอ
+    int yEC = map(constrain((int)currentEC, 500, 8000), 500, 8000, bottomY, topY);
     if (graphX == startX) lastYec = yEC;
     tft.drawLine(graphX - 1, lastYec, graphX, yEC, COLOR_RED);
     lastYec = yEC;
@@ -612,16 +691,8 @@ void loop() {
       graphX = startX;
     }
 
-    // Serial Monitor
-    Serial.print(snapTemp, 1); Serial.print(",");
-    Serial.print(snapMV);      Serial.print(",");
-    Serial.print(snapEC, 2);   Serial.print(",");
-    Serial.print(ecTarget, 1); Serial.print(",");
-    Serial.print(snapDist, 1); Serial.print(",");
-    Serial.println(distTarget, 1);
-
-    // ส่งขึ้น Cloud — ใช้ snap ทุกตัว ค่าตรงกับ TFT แน่นอน
-    sendToSheet(snapTemp, snapMV, snapEC, ecTarget, snapDist, distTarget);
-    sendToNetpie(snapTemp, snapMV, snapEC, ecTarget, snapDist, distTarget);
+    Serial.println("Screen Updated");
+    
+    // ⚠️ ลบคำสั่ง sendToSheet ตรงนี้ออกไปได้เลยครับ เพราะย้ายไปส่งตอน 10 วิแทนแล้ว
   }
 }
