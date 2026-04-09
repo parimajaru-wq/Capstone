@@ -16,7 +16,7 @@ const char* password = "EETARNET";
 // ═══════════════════════════════════════════════════════════
 //  Google Apps Script URL สำหรับบันทึกข้อมูลลง Google Sheet
 // ═══════════════════════════════════════════════════════════
-const char* scriptURL = "https://script.google.com/macros/s/AKfycbz-u3OrRJktEOWqLui1mex4VHW4RbJRsD0QW_MxAJ8Fkxm3Bm2XqFuGflZ-ja4LFrrC/exec";
+const char* scriptURL = "https://script.google.com/macros/s/AKfycbxmDjtKTZ4p8QLgQQSNAfK-Xn3cYzkoTi3A3WlXApx3sIoa1yUXC2WkkJDCkGojDDjI/exec";
 
 // ═══════════════════════════════════════════════════════════
 // เปลี่ยนจาก MINUTES เป็น SECONDS
@@ -124,7 +124,7 @@ int currentPWM_B = 0;
 // ═══════════════════════════════════════════════════════════
 //  ค่าเป้าหมาย
 // ═══════════════════════════════════════════════════════════
-float ecTarget   = 1800.0;
+float ecTarget   = 1500.0;
 float distTarget = 15.0;
 
 // ═══════════════════════════════════════════════════════════
@@ -235,6 +235,8 @@ String pendingURL  = "";
 bool   sendPending = false;
 SemaphoreHandle_t urlMutex;
 
+#include <WiFiClientSecure.h> 
+
 void sendTask(void* param) {
   while (true) {
     if (sendPending) {
@@ -244,13 +246,30 @@ void sendTask(void* param) {
         sendPending = false;
         xSemaphoreGive(urlMutex);
       }
+      
       if (WiFi.status() == WL_CONNECTED) {
+        WiFiClientSecure client;
+        client.setInsecure(); // สำคัญมาก 1: ข้ามการตรวจใบรับรองความปลอดภัย เพื่อให้ ESP32 คุยกับ Google ได้
+
         HTTPClient http;
-        http.setTimeout(5000);
-        http.begin(url);
-        http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-        http.GET();
-        http.end();
+        http.setTimeout(5000); // สำคัญมาก 2: เพิ่มเป็น 15 วินาที เพราะ Google ค่อนข้างใช้เวลาในการเขียน 100 บรรทัด
+        
+        // สำคัญมาก 3: ส่ง client (WiFiClientSecure) เข้าไปใน http.begin ด้วย
+        if (http.begin(client, url)) { 
+          http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+          
+          Serial.println("[Sheet] Sending data to Google Sheets...");
+          int httpCode = http.GET();
+          
+          if (httpCode > 0) {
+            Serial.printf("[Sheet] Success! Response Code: %d\n", httpCode);
+          } else {
+            Serial.printf("[Sheet] Error: %s\n", http.errorToString(httpCode).c_str());
+          }
+          http.end();
+        } else {
+          Serial.println("[Sheet] Unable to connect to Google (begin failed)");
+        }
       }
     }
     vTaskDelay(10 / portTICK_PERIOD_MS);
@@ -464,7 +483,7 @@ void updatePeriPumps(float EC, float ecTgt) {
   if (!pumpRunning) {
     pumpStopTime  = 0;
     float ratio = constrain(err / ecTgt, 0.0f, 1.0f);
-    unsigned long calcTime = (unsigned long)(ratio * 15000);
+    unsigned long calcTime = (unsigned long)(ratio * 20000);
 
     if (calcTime < 500) {
       pumpRunning = false;
@@ -661,6 +680,7 @@ void loop() {
     //
 
     if (rawEcIndex >= MAX_RAW_BUFFER) {
+
       String rawStr = "";
       rawStr.reserve(600);
       for (int i = 0; i < MAX_RAW_BUFFER; i++) {
