@@ -331,8 +331,6 @@ void sendToNetpie(float temp, int MV, float EC, float ecTgt, float dist, float d
   if (!mqttClient.connected()) return;
 
   unsigned long now = millis();
-  
-  // คำนวณเวลารอที่เหลือ (เหมือนเดิม)
   unsigned long remainWait = 0;
   if (!systemReady) {
     long w = 60 - ((now - bootTime) / 1000);
@@ -341,9 +339,10 @@ void sendToNetpie(float temp, int MV, float EC, float ecTgt, float dist, float d
     remainWait = (PUMP_STOP_DELAY - (now - pumpStopTime)) / 1000;
   }
 
-  // --- ส่วนที่แก้ไข: ใช้ EC (ค่าเฉลี่ย) ในทุกจุด ---
+  // สร้าง Payload ใหม่ (ใช้ EC เฉลี่ย และเพิ่ม totalML)
   String payload = "{\"data\":{"
-    "\"ec\":"        + String(EC,   2) + ","   // ใช้ค่าเฉลี่ยเหมือน TFT
+    "\"ec\":"        + String(EC,   2) + ","   // ค่าที่นิ่งเหมือนจอ TFT
+    "\"totalML\":"   + String(totalUsedML, 1) + "," // ปริมาณปุ๋ยที่ใช้ไป
     "\"mv\":"        + String(MV)      + ","
     "\"temp\":"      + String(temp, 1) + ","
     "\"dist\":"      + String(dist, 1) + ","
@@ -357,75 +356,48 @@ void sendToNetpie(float temp, int MV, float EC, float ecTgt, float dist, float d
   payload += "}}";
 
   mqttClient.publish(TOPIC_SHADOW, payload.c_str());
-
-  // ส่งเข้า Feed (เปลี่ยนจาก instant เป็นค่าเฉลี่ยทั้งหมด)
-  mqttClient.publish("@feed/ec", String(EC, 2).c_str()); 
-  mqttClient.publish("@feed/temp", String(temp, 1).c_str());
-  mqttClient.publish("@feed/dist", String(dist, 1).c_str());
-  mqttClient.publish("@feed/remainWait", String(remainWait).c_str()); 
+  mqttClient.publish("@feed/ec", String(EC, 2).c_str());
+  mqttClient.publish("@feed/totalML", String(totalUsedML, 1).c_str()); // ส่งเข้า Feed ด้วย
 }
 
 // ═══════════════════════════════════════════════════════════
 //  แสดงผลบนจอ TFT
 // ═══════════════════════════════════════════════════════════
-void drawScreen(int MV, float EC, float temp,
-                float ecTgt, float dist, float distTgt) {
-  tft.fillRectangle(45, 0, 220, 84, COLOR_BLACK);
+void drawScreen(int MV, float EC, float temp, float ecTgt) {
+  // ล้างพื้นที่ฝั่งขวา (ตั้งแต่ X=70 ถึงสุดจอ 220) 
+  // ครอบคลุมความสูงตั้งแต่บรรทัดแรกถึงบรรทัดสุดท้าย (Y 0-120)
+  tft.fillRectangle(70, 0, 220, 120, COLOR_BLACK);
 
-  tft.drawText(45, 2,  String(MV) + " mV",    COLOR_YELLOW);
-  tft.drawText(45, 16, String(temp, 1) + " C", COLOR_ORANGE);
-
+  // 1. Temp (Y=10)
+  tft.drawText(70, 10, String(temp, 1) + " C", COLOR_ORANGE);
+  
+  // 2. EC (Y=32)
   float ecDiff = EC - ecTgt;
   unsigned int ecColor;
-  String ecStatus;
-  if (abs(ecDiff) <= ecTgt * 0.05) {
-    ecColor = COLOR_GREEN; ecStatus = "OK";
-  } else if (ecDiff > 0) {
-    ecColor = COLOR_RED;   ecStatus = "HI";
-  } else {
-    ecColor = COLOR_CYAN;  ecStatus = "LO";
-  }
-  tft.drawText(45,  32, String(EC, 1), ecColor);
-  tft.drawText(150, 32, ecStatus,      ecColor);
-  tft.drawText(45,  48, String(ecTgt, 0), COLOR_WHITE);
+  if (abs(ecDiff) <= ecTgt * 0.05) ecColor = COLOR_GREEN; 
+  else if (ecDiff > 0)             ecColor = COLOR_RED;
+  else                            ecColor = COLOR_CYAN;
+  tft.drawText(70, 32, String(EC, 1), ecColor);
 
-  unsigned int dColor;
-  String dStatus;
-  if (dist < 0) {
-    dColor = COLOR_RED;
-    tft.drawText(45, 64, "--- cm", dColor);
-  } else {
-    float dDiff = dist - distTgt;
-    if (abs(dDiff) <= distTgt * 0.05) {
-      dColor = COLOR_GREEN; dStatus = "OK";
-    } else if (dDiff < 0) {
-      dColor = COLOR_CYAN;  dStatus = "HI";
-    } else {
-      dColor = COLOR_RED;   dStatus = "LO";
-    }
-    tft.drawText(45,  64, String(dist, 1) + " cm", dColor);
-    tft.drawText(150, 64, dStatus,                  dColor);
-  }
+  // 3. Ref (Y=54)
+  tft.drawText(70, 54, String(ecTgt, 0), COLOR_WHITE);
 
-  tft.fillRectangle(45, 75, 220, 84, COLOR_BLACK);
-  tft.drawText(2, 75, "PMP:", COLOR_WHITE);
+  // 4. Used ML (Y=76)
+  tft.drawText(70, 76, String(totalUsedML, 1) + " ml", COLOR_MAGENTA);
 
+  // 5. Status/Pump (Y=98)
   if (!systemReady) {
-    // ระหว่าง 1 นาทีแรก จะแสดงคำว่า WARMUP
     long warmupRemain = 60 - ((millis() - bootTime) / 1000);
-    tft.drawText(45, 75, "WARMUP " + String(warmupRemain) + "s", COLOR_YELLOW);
+    tft.drawText(70, 98, "WARM " + String(warmupRemain) + "s", COLOR_YELLOW);
   } else if (EC >= ecTgt) {
-    tft.drawText(45, 75, "OFF", COLOR_RED);
+    tft.drawText(70, 98, "OFF", COLOR_RED);
   } else if (pumpRunning) {
-    tft.drawText(45, 75, "ON " + String(currentOnTime / 1000) + "s", COLOR_GREEN);
+    tft.drawText(70, 98, "ON " + String(currentOnTime / 1000) + "s", COLOR_GREEN);
   } else if (pumpStopTime > 0) {
     unsigned long remain = PUMP_STOP_DELAY - (millis() - pumpStopTime);
-    tft.drawText(45, 75, "WAIT " + String(remain / 1000) + "s", COLOR_YELLOW);
+    tft.drawText(70, 98, "WAIT " + String(remain / 1000) + "s", COLOR_YELLOW);
   }
-  tft.fillRectangle(0, topY - 4, startX - 1, topY + 6, COLOR_BLACK);
-  tft.drawText(2, topY - 4, String((int)(ecTgt + 100)), COLOR_YELLOW);
 }
-
 // ═══════════════════════════════════════════════════════════
 //  ควบคุม Relay (เปลี่ยนเป็น Active HIGH)
 // ═══════════════════════════════════════════════════════════
@@ -442,7 +414,6 @@ void setPeriPumps(bool onA, bool onB) {
 //  Logic ควบคุมปั๊มสารละลาย
 // ═══════════════════════════════════════════════════════════
 void updatePeriPumps(float EC, float ecTgt) {
-  // หากระบบยัง Warmup ไม่ครบ 1 นาที จะล็อกไม่ให้ปั๊มทำงาน
   if (!systemReady) {
     setPeriPumps(false, false);
     return;
@@ -478,17 +449,19 @@ void updatePeriPumps(float EC, float ecTgt) {
     currentOnTime = calcTime;
     pumpStartTime = now;
     pumpRunning   = true;
-    Serial.printf("Pump ON err:%.1f onTime:%lums\n", err, currentOnTime);
   }
 
   unsigned long elapsed = now - pumpStartTime;
   if (elapsed < currentOnTime) {
     setPeriPumps(true, true);
   } else {
+    // --- จุดที่แก้ไข: คำนวณปริมาณปุ๋ยสะสมเมื่อปั๊มทำงานจบวินาทีสุดท้าย ---
+    float cycleML = (currentOnTime / 1000.0) * FLOW_RATE;
+    totalUsedML += cycleML; // บวกเพิ่มเข้าไปในยอดรวม
+    
     pumpRunning  = false;
     pumpStopTime = now;
     setPeriPumps(false, false);
-    Serial.println("Pump OFF — waiting next cycle");
   }
 }
 
@@ -541,9 +514,9 @@ void setup() {
   // }
 
   tft.begin();
-  tft.setOrientation(1);
+  tft.setOrientation(3);
   tft.clear();
-  tft.setFont(Terminal6x8);
+  tft.setFont(Terminal11x16);
   tft.drawText(2, 2, "Booting...", COLOR_WHITE);
 
   WiFi.begin(ssid, password);
@@ -576,19 +549,14 @@ void setup() {
   systemReady = false; 
   bootTime    = millis();
 
+
   tft.clear();
-  tft.drawText(2,  2,  "MV:",  COLOR_WHITE);
-  tft.drawText(2,  16, "Temp:",   COLOR_WHITE);
-  tft.drawText(2,  32, "EC:",  COLOR_WHITE);
-  tft.drawText(2,  48, "TGT:", COLOR_WHITE);
-  tft.drawText(2,  64, "Dst:", COLOR_WHITE);
-  tft.drawText(2,  75, "PMP:", COLOR_WHITE);
-
-  tft.drawLine(startX, topY,    startX, bottomY, COLOR_WHITE);
-  tft.drawLine(startX, bottomY, endX,   bottomY, COLOR_WHITE);
-
-  tft.drawText(2,   bottomY - 4, "0", COLOR_YELLOW);
-  tft.drawText(180, bottomY + 4, String(SET_TIME_SECONDS) + " sec", COLOR_YELLOW);
+  tft.setFont(Terminal11x16);
+  tft.drawText(2,  10, "Temp:", COLOR_WHITE);
+  tft.drawText(2,  32, "EC:",   COLOR_WHITE);
+  tft.drawText(2,  54, "Ref:",  COLOR_WHITE);
+  tft.drawText(2,  76, "Used:", COLOR_WHITE);
+  tft.drawText(2,  98, "Stat:", COLOR_WHITE);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -661,9 +629,7 @@ void loop() {
     //   Serial.println("SD Write Error!");
     // }
     //
-
     if (rawEcIndex >= MAX_RAW_BUFFER) {
-
       String rawStr = "";
       rawStr.reserve(600);
       for (int i = 0; i < MAX_RAW_BUFFER; i++) {
@@ -672,7 +638,8 @@ void loop() {
       }
       
       float snapDist = readDistance();
-     // ส่ง currentEC (เฉลี่ย) เข้าไปแทน instantEC
+
+      // --- แก้ไขจุดนี้: ส่ง currentEC (เฉลี่ย) เพื่อให้ค่าใน Sheet และ Netpie นิ่ง ---
       sendToSheet(currentTemp, currentMV, currentEC, ecTarget, snapDist, distTarget, rawStr);
       sendToNetpie(currentTemp, currentMV, currentEC, ecTarget, snapDist, distTarget, rawStr);
     
@@ -683,7 +650,9 @@ void loop() {
   if (now - netpieTime >= netpieInterval) {
     netpieTime = now;
     float snapDist = readDistance();
-    // ส่ง currentEC (เฉลี่ย) เข้าไปเพื่อให้ค่าบน Dashboard นิ่งเหมือนหน้าจอ
+
+    // --- แก้ไขจุดนี้: เปลี่ยนจาก instantMV เป็น currentMV และใช้ currentEC ---
+    // เพื่อให้ตัวเลขบน Dashboard ของ NETPIE ตรงกับหน้าจอ TFT เป๊ะๆ
     sendToNetpie(currentTemp, currentMV, currentEC, ecTarget, snapDist, distTarget, "");
   }
 
@@ -691,17 +660,6 @@ void loop() {
     tftTime = now;
     float snapDist = readDistance();
 
-    drawScreen(currentMV, currentEC, currentTemp, ecTarget, snapDist, distTarget);
-
-    int maxGraph = (int)(ecTarget + 100);
-    int yEC = map(constrain((int)currentEC, 500, maxGraph), 500, maxGraph, bottomY, topY);
-    if (graphX == startX) lastYec = yEC;
-    tft.drawLine(graphX - 1, lastYec, graphX, yEC, COLOR_RED);
-    lastYec = yEC;
-    graphX++;
-    if (graphX > endX) {
-      tft.fillRectangle(startX + 1, topY, endX, bottomY - 1, COLOR_BLACK);
-      graphX = startX;
-    }
+    drawScreen(currentMV, currentEC, currentTemp, ecTarget);
   }
 }
