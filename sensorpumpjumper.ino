@@ -16,7 +16,7 @@ const char* password = "EETARNET";
 // ═══════════════════════════════════════════════════════════
 //  Google Apps Script URL สำหรับบันทึกข้อมูลลง Google Sheet
 // ═══════════════════════════════════════════════════════════
-const char* scriptURL = "https://script.google.com/macros/s/AKfycbxmDjtKTZ4p8QLgQQSNAfK-Xn3cYzkoTi3A3WlXApx3sIoa1yUXC2WkkJDCkGojDDjI/exec";
+const char* scriptURL = "https://script.google.com/macros/s/AKfycbwV45LLO88PV6GVwgJewzOl0KS9NjEwKcqk-xoJD_-6j5UIbIxHMKxoXu8XHW6TJVLt/exec";
 
 // ═══════════════════════════════════════════════════════════
 // เปลี่ยนจาก MINUTES เป็น SECONDS
@@ -28,6 +28,9 @@ const char* scriptURL = "https://script.google.com/macros/s/AKfycbxmDjtKTZ4p8QLg
 const int MAX_RAW_BUFFER = 100;
 float rawEcBuffer[MAX_RAW_BUFFER];
 int   rawEcIndex = 0;
+
+float totalUsedML = 0.0;           // ปริมาณปุ๋ยรวมที่ใช้ไป (ml)
+const float FLOW_RATE = 1.172;     // อัตราการไหล 1.172 ml/s
 
 // ═══════════════════════════════════════════════════════════
 //  การตั้งค่า NETPIE MQTT
@@ -291,10 +294,10 @@ void updateMA() {
 // ═══════════════════════════════════════════════════════════
 float calcEC(int MV, float coef) {
   float x = (float)MV;
-  float raw = ( 4.16e-05f * x * x * x)
-            + (-3.60e-02f * x * x)
-            + ( 11.69f    * x)
-            +   456.31f;
+  float raw = ( 4.1634084e-05f * x * x * x)
+            + (-3.6006583e-02f * x * x)
+            + ( 11.6919369f    * x)
+            +   456.3218537f;
   return raw / coef;
 }
 
@@ -324,39 +327,29 @@ void sendToSheet(float temp, int MV, float EC,
 // ═══════════════════════════════════════════════════════════
 //  ส่งข้อมูลขึ้น NETPIE
 // ═══════════════════════════════════════════════════════════
-void sendToNetpie(float temp, int MV, float EC, float instEC, 
-                  float ecTgt, float dist, float distTgt, String rawData = "") {
+void sendToNetpie(float temp, int MV, float EC, float ecTgt, float dist, float distTgt, String rawData = "") {
   if (!mqttClient.connected()) return;
 
   unsigned long now = millis();
-  unsigned long remainOn = 0;
-  if (pumpRunning) {
-    unsigned long elapsed = now - pumpStartTime;
-    remainOn = (elapsed < currentOnTime) ? (currentOnTime - elapsed) / 1000 : 0;
-  }
-
-  // ── คำนวณเวลารอ (remainWait) หน่วยเป็นวินาที ──
+  
+  // คำนวณเวลารอที่เหลือ (เหมือนเดิม)
   unsigned long remainWait = 0;
   if (!systemReady) {
-    // ช่วง Warmup
     long w = 60 - ((now - bootTime) / 1000);
     remainWait = (w > 0) ? (unsigned long)w : 0;
   } else if (pumpStopTime > 0 && (now - pumpStopTime < PUMP_STOP_DELAY)) {
-    // ช่วงรอรอบปั๊มถัดไป
     remainWait = (PUMP_STOP_DELAY - (now - pumpStopTime)) / 1000;
   }
 
+  // --- ส่วนที่แก้ไข: ใช้ EC (ค่าเฉลี่ย) ในทุกจุด ---
   String payload = "{\"data\":{"
-    "\"ec\":"        + String(EC,   2) + ","
-    "\"instantEC\":" + String(instEC, 2) + ","
+    "\"ec\":"        + String(EC,   2) + ","   // ใช้ค่าเฉลี่ยเหมือน TFT
     "\"mv\":"        + String(MV)      + ","
     "\"temp\":"      + String(temp, 1) + ","
     "\"dist\":"      + String(dist, 1) + ","
     "\"pumpA\":"     + String(currentPWM_A) + ","
     "\"pumpB\":"     + String(currentPWM_B) + ","
-    "\"onTime\":"    + String(currentOnTime / 1000) + ","
-    "\"remainOn\":"  + String(remainOn) + ","
-    "\"remainWait\":"+ String(remainWait); // <--- ส่งเข้า Shadow
+    "\"remainWait\":"+ String(remainWait);
 
   if (rawData != "") {
     payload += ",\"rawEc\":\"" + rawData + "\"";
@@ -365,21 +358,11 @@ void sendToNetpie(float temp, int MV, float EC, float instEC,
 
   mqttClient.publish(TOPIC_SHADOW, payload.c_str());
 
-  mqttClient.publish("@feed/ec",        String(EC,   2).c_str());
-  mqttClient.publish("@feed/instantEC", String(instEC, 2).c_str());
-  mqttClient.publish("@feed/temp",      String(temp, 1).c_str());
-  mqttClient.publish("@feed/dist",      String(dist, 1).c_str());
-  mqttClient.publish("@feed/pumpA",     String(currentPWM_A).c_str());
-  mqttClient.publish("@feed/pumpB",     String(currentPWM_B).c_str());
-  mqttClient.publish("@feed/onTime",    String(currentOnTime / 1000).c_str());
-  mqttClient.publish("@feed/remainOn",  String(remainOn).c_str());
-  
-  // <--- ส่งเข้า Feed แยก
-  mqttClient.publish("@feed/remainWait",String(remainWait).c_str()); 
-
-  if (rawData != "") {
-    mqttClient.publish("@feed/rawEc", rawData.c_str());
-  }
+  // ส่งเข้า Feed (เปลี่ยนจาก instant เป็นค่าเฉลี่ยทั้งหมด)
+  mqttClient.publish("@feed/ec", String(EC, 2).c_str()); 
+  mqttClient.publish("@feed/temp", String(temp, 1).c_str());
+  mqttClient.publish("@feed/dist", String(dist, 1).c_str());
+  mqttClient.publish("@feed/remainWait", String(remainWait).c_str()); 
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -689,10 +672,10 @@ void loop() {
       }
       
       float snapDist = readDistance();
-      
+     // ส่ง currentEC (เฉลี่ย) เข้าไปแทน instantEC
       sendToSheet(currentTemp, currentMV, currentEC, ecTarget, snapDist, distTarget, rawStr);
-      sendToNetpie(currentTemp, currentMV, currentEC, instantEC, ecTarget, snapDist, distTarget, rawStr);
-      
+      sendToNetpie(currentTemp, currentMV, currentEC, ecTarget, snapDist, distTarget, rawStr);
+    
       rawEcIndex = 0;
     }
   }
@@ -700,7 +683,8 @@ void loop() {
   if (now - netpieTime >= netpieInterval) {
     netpieTime = now;
     float snapDist = readDistance();
-    sendToNetpie(currentTemp, instantMV, currentEC, instantEC, ecTarget, snapDist, distTarget, "");
+    // ส่ง currentEC (เฉลี่ย) เข้าไปเพื่อให้ค่าบน Dashboard นิ่งเหมือนหน้าจอ
+    sendToNetpie(currentTemp, currentMV, currentEC, ecTarget, snapDist, distTarget, "");
   }
 
   if (now - tftTime >= tftInterval) {
